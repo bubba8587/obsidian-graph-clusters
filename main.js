@@ -31514,6 +31514,7 @@ var DEFAULT_SETTINGS = {
   ollamaModel: "nomic-embed-text",
   similarityThreshold: 0.8,
   clusteringMethod: "single",
+  maxClustersPerNote: 1,
   generateRootNote: false,
   ollamaClusterNaming: false
 };
@@ -31578,6 +31579,14 @@ var SemanticClusterSettingsTab = class extends import_obsidian.PluginSettingTab 
     ).addDropdown(
       (drop) => drop.addOption("single", "Single-linkage (any pair)").addOption("complete", "Complete-linkage (all pairs)").setValue(this.plugin.settings.clusteringMethod).onChange(async (value) => {
         this.plugin.settings.clusteringMethod = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("Max clusters per note").setDesc(
+      "1 = strict partition (each note in one cluster). Higher = a note can appear in multiple clusters whose centroid similarity meets the threshold. Better for discovery in large vaults; less rigorous."
+    ).addSlider(
+      (slider) => slider.setLimits(1, 5, 1).setValue(this.plugin.settings.maxClustersPerNote).setDynamicTooltip().onChange(async (value) => {
+        this.plugin.settings.maxClustersPerNote = value;
         await this.plugin.saveSettings();
       })
     );
@@ -31996,6 +32005,40 @@ function buildClusters(notes, threshold, method) {
     };
   });
 }
+function attachSecondaryMembers(clusters, threshold, maxPerNote) {
+  if (maxPerNote <= 1 || clusters.length <= 1)
+    return clusters;
+  const centroids = clusters.map(
+    (c) => computeCentroid(c.members.map((m) => m.vector))
+  );
+  const primaryByPath = /* @__PURE__ */ new Map();
+  clusters.forEach((c, idx) => {
+    for (const m of c.members)
+      primaryByPath.set(m.path, idx);
+  });
+  for (const cluster of clusters) {
+    const primaries = [...cluster.members];
+    for (const note of primaries) {
+      const homeIdx = primaryByPath.get(note.path);
+      const scored = [];
+      for (let i = 0; i < clusters.length; i++) {
+        if (i === homeIdx)
+          continue;
+        const sim = cosineSimilarity(note.vector, centroids[i]);
+        if (sim >= threshold)
+          scored.push({ idx: i, sim });
+      }
+      scored.sort((a, b) => b.sim - a.sim);
+      const extras = scored.slice(0, maxPerNote - 1);
+      for (const { idx } of extras) {
+        if (clusters[idx].members.some((m) => m.path === note.path))
+          continue;
+        clusters[idx].members.push(note);
+      }
+    }
+  }
+  return clusters;
+}
 async function tryOllamaClusterName(members, endpoint) {
   try {
     const titles = members.slice(0, 12).map((m) => m.title).join(", ");
@@ -32279,6 +32322,11 @@ var _SemanticClusterPlugin = class extends import_obsidian6.Plugin {
         embeddings,
         this.settings.similarityThreshold,
         this.settings.clusteringMethod
+      );
+      attachSecondaryMembers(
+        clusters,
+        this.settings.similarityThreshold,
+        this.settings.maxClustersPerNote
       );
       if (this.settings.embeddingBackend === "ollama" && this.settings.ollamaClusterNaming) {
         for (const cluster of clusters) {

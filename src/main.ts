@@ -6,6 +6,7 @@ import {
 } from "./settings";
 import { EmbeddingManager, NoteEmbedding } from "./embeddings";
 import {
+  attachSecondaryMembers,
   buildClusters,
   clusterCountHistogram,
   HistogramRow,
@@ -187,6 +188,11 @@ export default class SemanticClusterPlugin extends Plugin {
         embeddings,
         this.settings.similarityThreshold,
         this.settings.clusteringMethod
+      );
+      attachSecondaryMembers(
+        clusters,
+        this.settings.similarityThreshold,
+        this.settings.maxClustersPerNote
       );
 
       if (

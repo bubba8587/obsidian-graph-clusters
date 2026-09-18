@@ -252,6 +252,53 @@ export function buildClusters(
     });
 }
 
+// Adds each note as a secondary member to up to (maxPerNote - 1) extra
+// clusters — those (other than the note's primary cluster) whose centroid
+// similarity meets the threshold. Centroids are computed once from the
+// original partition and frozen, so secondary memberships don't drift the
+// cluster's identity. Returns the same cluster array, members mutated in-place.
+export function attachSecondaryMembers(
+  clusters: Cluster[],
+  threshold: number,
+  maxPerNote: number
+): Cluster[] {
+  if (maxPerNote <= 1 || clusters.length <= 1) return clusters;
+
+  // Freeze a centroid per cluster from its primary members.
+  const centroids = clusters.map((c) =>
+    computeCentroid(c.members.map((m) => m.vector))
+  );
+  // Track which cluster each note's primary membership is — by path, since
+  // paths are unique and identity comparison across copies isn't guaranteed.
+  const primaryByPath = new Map<string, number>();
+  clusters.forEach((c, idx) => {
+    for (const m of c.members) primaryByPath.set(m.path, idx);
+  });
+
+  for (const cluster of clusters) {
+    // Copy primaries so we iterate a stable set while mutating members.
+    const primaries = [...cluster.members];
+    for (const note of primaries) {
+      const homeIdx = primaryByPath.get(note.path)!;
+      // Score note against every OTHER cluster's frozen centroid.
+      const scored: { idx: number; sim: number }[] = [];
+      for (let i = 0; i < clusters.length; i++) {
+        if (i === homeIdx) continue;
+        const sim = cosineSimilarity(note.vector, centroids[i]);
+        if (sim >= threshold) scored.push({ idx: i, sim });
+      }
+      scored.sort((a, b) => b.sim - a.sim);
+      const extras = scored.slice(0, maxPerNote - 1);
+      for (const { idx } of extras) {
+        // Skip if this cluster already contains the note (avoid double-add).
+        if (clusters[idx].members.some((m) => m.path === note.path)) continue;
+        clusters[idx].members.push(note);
+      }
+    }
+  }
+  return clusters;
+}
+
 // Best-effort: ask Ollama to generate a short topic label for the cluster.
 // Returns null on any failure so the caller falls back to the centroid title.
 // Called only when ollamaClusterNaming is true; on large vaults this is one

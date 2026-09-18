@@ -10,6 +10,11 @@ export interface SemanticClusterSettings {
   // "single" can chain loosely-related notes through intermediaries; "complete"
   // requires every pair in a cluster to meet the threshold (tighter, no chaining).
   clusteringMethod: "single" | "complete";
+  // When > 1, after the partition is built each note may be added as a
+  // secondary member to up to (N - 1) additional clusters whose centroid
+  // similarity meets the threshold. Trades partition cleanliness for
+  // discoverability — a note relevant to multiple topics surfaces in each.
+  maxClustersPerNote: number;
   generateRootNote: boolean;
   // Gate the per-cluster Ollama chat call behind an explicit opt-in. On large
   // vaults this is one HTTP round-trip per cluster and will noticeably slow
@@ -24,6 +29,7 @@ export const DEFAULT_SETTINGS: SemanticClusterSettings = {
   ollamaModel: "nomic-embed-text",
   similarityThreshold: 0.8,
   clusteringMethod: "single",
+  maxClustersPerNote: 1,
   generateRootNote: false,
   ollamaClusterNaming: false,
 };
@@ -151,6 +157,24 @@ export class SemanticClusterSettingsTab extends PluginSettingTab {
           .setValue(this.plugin.settings.clusteringMethod)
           .onChange(async (value: string) => {
             this.plugin.settings.clusteringMethod = value as "single" | "complete";
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Max clusters per note")
+      .setDesc(
+        "1 = strict partition (each note in one cluster). " +
+          "Higher = a note can appear in multiple clusters whose centroid similarity meets the threshold. " +
+          "Better for discovery in large vaults; less rigorous."
+      )
+      .addSlider((slider) =>
+        slider
+          .setLimits(1, 5, 1)
+          .setValue(this.plugin.settings.maxClustersPerNote)
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            this.plugin.settings.maxClustersPerNote = value;
             await this.plugin.saveSettings();
           })
       );
